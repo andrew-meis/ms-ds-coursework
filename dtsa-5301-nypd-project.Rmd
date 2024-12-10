@@ -1,0 +1,110 @@
+---
+title: "dtsa-5301-project"
+author: "Andrew M."
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## NYPD Shooting Incident Data
+
+The data used for this project is available at the following URL: <https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>. The data consist of a list of every shooting incident that occurred in New York City going back to 2006 through the end of the previous year. More information about the data can be found here: <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>.
+
+The following code chunk imports the raw data set and tidies the data. My analysis looks at the following two relationships: number of incidents per year per borough, and borough in which the incident occurred versus whether or not the incident was a statistical murder. Therefore, when tidying the data, I maintain only the following columns: INCIDENT_KEY, OCCUR_DATE, OCCUR_TIME, BORO, STATISTICAL_MURDER_FLAG.
+
+The main questions I explore in this report concern shooting incidents with location and time as the primary factors of interest.
+
+```{r import-data-and-tidy-data}
+shooting_incident_data <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+shooting_incident_data <- shooting_incident_data %>% select(c(INCIDENT_KEY, OCCUR_DATE, OCCUR_TIME, BORO, STATISTICAL_MURDER_FLAG))
+```
+
+## Plot: Number of incidents per year by borough
+
+I first want to ask: how are the shooting incidents distributed geographically each year? 
+
+This first plot addresses this question by visualizing the number of incidents per year in each borough. I first transform the data to extract the year of the incident into a new column--OCCUR_YEAR. Then, I group the data by BORO and OCCUR_YEAR. Finally, I count the number of incidents by BORO.
+
+This visualization conveys information about incident trends over time. It would be useful to understand how certain events, such as changes in policy or the COVID-19 pandemic, impacted the overall number of incidents. By charting the number of incidents by borough, we can see if these impacts were different across each area of the city.
+
+```{r first-visualization}
+incident_data_by_year_and_boro <- shooting_incident_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate(OCCUR_YEAR = year(OCCUR_DATE)) %>%
+  group_by(BORO) %>%
+  group_by(OCCUR_YEAR) %>%
+  count(BORO)
+plot <- incident_data_by_year_and_boro %>% 
+  ggplot(aes(x = factor(OCCUR_YEAR), y = n, group = BORO, color = BORO)) + 
+  geom_line() + 
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 45)) + 
+  labs(x = "Year", y = "Number of incidents", title = "Shooting incidents per year", color = "Borough")
+plot
+```
+
+## Plot: Number of incidents by month
+
+I then want to ask: how are the shooting incidents distributed within each year?
+
+This second plot addresses this question by visualizing the number of incidents by month since January 2006. It also compares the number of incidents that are classified as murders versus those that are not. I first transform the data to extract the month of the incident into a new column--OCCUR_MONTH. Then, I group the data by STATISTICAL_MURDER_FLAG and OCCUR_MONTH Finally, I count the number of incidents by STATISTICAL_MURDER_FLAG.
+
+This visualization helps to characterize within-year trends for shooting incidents, which may help influence decisions surrounding, for example, number of first-responders to have on the job during a given month.
+
+```{r second-visualization}
+incident_data_by_month <- shooting_incident_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate(OCCUR_MONTH = month(OCCUR_DATE)) %>%
+  group_by(STATISTICAL_MURDER_FLAG) %>%
+  group_by(OCCUR_MONTH) %>%
+  count(STATISTICAL_MURDER_FLAG)
+plot <- incident_data_by_month %>% 
+  ggplot(aes(x = factor(OCCUR_MONTH), y = n, fill = STATISTICAL_MURDER_FLAG)) + 
+  geom_bar(stat="identity", position=position_dodge()) +
+  labs(x = "Month", y = "Number of incidents", title = "Shooting incidents by month since January 2006", fill = "Statistical Murder") +
+  scale_x_discrete(labels = c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(face = "bold", angle = 45))
+plot
+```
+
+## Model: Shooting trend by year
+
+Finally I want to ask: can we model the overall trend in shooting incidents per year?
+
+For this model, I wanted to get a sense of the overall trend in shooting incidents since the beginning of this data set (2006). My data tidying is similar to above but here I group and count by OCCUR_YEAR. I used a simple linear model (plotted below in red color) with a 95% confidence interval (the grey-shaded area).
+
+Based on this model, we can begin to explore why certain years may fall outside the confidence interval, for example. The early years of the pandemic are clear outliers within the trend observed in the years prior.
+
+```{r model}
+incident_data_by_year <- shooting_incident_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate(OCCUR_YEAR = year(OCCUR_DATE)) %>%
+  group_by(OCCUR_YEAR) %>%
+  count(OCCUR_YEAR)
+mod_plot <- incident_data_by_year %>% ggplot(aes(x = OCCUR_YEAR, y = n)) +
+  geom_point(color = "blue") +
+  geom_smooth(formula = y ~ x, method = "lm", color = "red") + 
+  scale_x_continuous(breaks = incident_data_by_year$OCCUR_YEAR) +
+  labs(x = "Year", y = "Number of incidents", title = "Shooting incidents per year")
+mod_plot
+```
+
+## Bias
+The data obviously are reported by the NYPD, so only incidents that are reported to the police are included in the dataset, so my analysis reflects these biases. It would be interesting to compare, for example, this dataset to others to gain insight into how many shooting incidents may go unreported. The dataset also only includes data regarding incidents that occur within one of the five boroughs of New York City, so comparisons with other cities, for example, are not possible.
+
+## Results
+
+From the analyses and visualizations presented above, we can see that the highest concentration of shooting incidents occurs within the Bronx and Brooklyn, specifically. The likelihood of these incidents is greater during the warmer months of the year. Finally, the overall trend in number of shooting incidents is downward, although some recent events such as the Covid-19 pandemic disrupted this trend greatly.
+
+## Conclusion
+
+This dataset provides insight into a variety of factors regarding the location, time, and trend of shooting incidents in New York City. Key insights reflect the overall trend of shooting incidents year-after-year and how these incidents are distributed within the months of the year and across the five boroughs of New York City.
+
+```{r session info}
+sessionInfo()
+```

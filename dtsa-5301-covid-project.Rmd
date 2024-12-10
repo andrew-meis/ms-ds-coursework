@@ -1,0 +1,155 @@
+---
+title: "dtas-5301-COVID-project"
+author: "Andrew M."
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Introduction
+The data used in this project consist of the COVID-19 cases and deaths from the John Hopkins Coronavirus Resource Center. The data are publicly available at their Github page: <https://github.com/CSSEGISandData/COVID-19/tree/master>. Data collection ceased on March 10, 2023, so these data reflect only the time from January 22, 2020 until the end of data collection. In this report, I am interested in questions relating to the early spread of COVID-19 before the introduction of vaccines. Since the vaccine was approved in December 2020, I primarily constrain my analysis to the data collected during 2020.
+
+## Importing COVID-19 Data
+This script fetches the raw data from the Johns Hopkins Github repository.
+``` {r covid-data}
+url_root <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <-
+  c("time_series_covid19_confirmed_global.csv",
+    "time_series_covid19_deaths_global.csv",
+    "time_series_covid19_confirmed_US.csv",
+    "time_series_covid19_deaths_US.csv")
+urls <- str_c(url_root, file_names)
+global_cases <- read_csv(urls[1], show_col_types = FALSE)
+global_deaths <- read_csv(urls[2], show_col_types = FALSE)
+US_cases <- read_csv(urls[3], show_col_types = FALSE)
+US_deaths <- read_csv(urls[4], show_col_types = FALSE)
+
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/refs/heads/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid <- read_csv(uid_lookup_url, show_col_types = FALSE)
+```
+
+## Tidying the data
+For my first visualization, I want to compare the United States and Canada. So I clean up the global data to only include the rows from Canada.
+``` {r data-tidying}
+global_cases_tidied <- global_cases %>%
+  pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "cases") %>%
+  rename(Province_State = `Province/State`, Country_Region = `Country/Region`) %>%
+  select(-c(Lat, Long))
+global_deaths_tidied <- global_deaths %>%
+  pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "deaths") %>%
+  rename(Province_State = `Province/State`, Country_Region = `Country/Region`) %>%
+  select(-c(Lat, Long))
+global_cases_and_deaths <- global_cases_tidied %>%
+  full_join(global_deaths_tidied) %>%
+  mutate(date = mdy(date)) %>%
+  filter(cases > 0) %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population)
+Canada_cases_and_deaths <- global_cases_and_deaths %>%
+  filter(`Country_Region` == "Canada") %>%
+  unite("Combined_Key", c(`Province_State`, `Country_Region`), sep = ", ", na.rm = TRUE, remove = FALSE)
+US_cases_tidied <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key), names_to = "date", values_to = "cases") %>%
+  select(Province_State:cases) %>%
+  select(-c(Lat, Long_))
+US_deaths_tidied <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population), names_to = "date", values_to = "deaths") %>%
+  select(Province_State:deaths) %>%
+  select(-c(Lat, Long_, Population))
+US_cases_and_deaths <- US_cases_tidied %>%
+  full_join(US_deaths_tidied) %>%
+  mutate(date = mdy(date)) %>%
+  filter(cases > 0)
+```
+
+## Early spread of COVID-19 in the United States versus Canada
+I first want to investigate the trends in the spread of the virus during the initial period of the virus. For this investigation, I'm going to only consider data from the year 2020, before the introduction of widespread vaccination. I compare the United States and Canada simply as a baseline measure of two highly-developed North America nations with populations that are spread between urban and rural areas.
+
+The purpose of this question is to begin to drill down into questions such as, which country had a more effective response; what other variables should we consider when comparing two countries; or was the response of one country even more effective than the other?
+
+Looking at the figure, we can immediately see that the pattern of growth in the United States is much sharper than in Canada. Specifically, cases grew exponentially at the end of the year. After the summer of social distancing, individuals in the United States were possibility more willing to return to normal activities in the fall, e.g. some children even went back to school. A further analysis I would like to see is whether individual states had the same or different trends as the country as a whole.
+
+Population figures for 2020 were retrieved from: <https://databank.worldbank.org/source/population-estimates-and-projections/>
+```{r united-states-vs-canada-early-trends}
+Canada_2020_population <- 38028638
+Canada_2020_cases <- Canada_cases_and_deaths %>%
+  filter(between(date, as.Date('2020-01-01'), as.Date('2020-12-31'))) %>%
+  group_by(date, Country_Region) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), population = Canada_2020_population) %>%
+  mutate(cases_per_mill = cases * 1000000 / population)
+US_2020_population <- 331526933
+US_2020_cases <- US_cases_and_deaths %>%
+  filter(between(date, as.Date('2020-01-01'), as.Date('2020-12-31'))) %>%
+  group_by(date, Country_Region) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), population = US_2020_population) %>%
+  mutate(cases_per_mill = cases * 1000000 / population)
+joined_US_and_Canada <- bind_rows(Canada_2020_cases, US_2020_cases)
+plot <- ggplot(joined_US_and_Canada, aes(x = date, y = cases_per_mill, color = Country_Region)) +
+  geom_line() + 
+  labs(x = "Date", y = "Cases per million", title = "Early COVID-19 spread in the US and Canada", color = "Country")
+plot
+```
+
+## New cases per month in the US for the four largest states by population
+Based on my previous visualization, I want to drill down into the data for the United States and see which months had comparatively lower rates of spread of COVID-19. We can see this idea represented approximately in the slope of the curve in the line graph above, but here I want to simply see new cases rather than the sum of all cases, so we can see the changes in the slope more easily. In order to gain a sense of whether or not these trends were influenced by state-level policies, I selected the four largest US states by population, which also helps to represent the US political spectrum.
+
+The purpose of this visualization is to be able to see the trends within larger buckets of data. For example, in months where the spread of COVID-19 was lower than the previous month, we can begin to investigate the impact of specific policies, procedures, or other events that changed the rate of spread of COVID-19. New York is the clear outlier in terms of both the early explosion of COVID-19 within the state and the more controlled spread during the summer of 2020. Nevertheless, during the fall of 2020, New York begins to exhibit similar trends as the other three states.
+
+Population figures for 2020 were retrieved from: <https://www.census.gov/library/visualizations/interactive/2020-population-and-housing-state-data.html>
+```{r new-cases-per-month-US}
+California_pop <- 39538223
+Florida_pop <- 21538187
+New_York_pop <- 20201249
+Texas_pop <- 29145505
+US_2020_cases_by_month <- US_cases_and_deaths %>%
+  filter(Province_State == c("California", "Florida", "New York", "Texas")) %>%
+  filter(between(date, as.Date('2020-01-01'), as.Date('2020-12-31'))) %>%
+  select(c(date, Province_State, cases)) %>%
+  group_by(Province_State, month(date)) %>%
+  summarize(cases = sum(cases)) %>%
+  mutate(new_cases = cases - lag(cases, n=1)) %>%
+  mutate(new_cases = coalesce(new_cases, cases)) %>%
+  mutate(population = case_when(
+    Province_State == "California" ~ California_pop,
+    Province_State == "Florida" ~ Florida_pop,
+    Province_State == "New York" ~ New_York_pop,
+    Province_State == "Texas" ~ Texas_pop
+  )) %>%
+  mutate(new_cases_per_mill = new_cases * 1000000 / population)
+colnames(US_2020_cases_by_month)[colnames(US_2020_cases_by_month) == 'month(date)'] <- 'month'
+plot <- ggplot(US_2020_cases_by_month, aes(x = factor(month), y = new_cases_per_mill, group =  Province_State,color = Province_State)) +
+  geom_line() +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 45)) + 
+  scale_x_discrete(labels = c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))  + 
+  labs(x = "Month", y = "New cases per million persons", title = "Early spread of COVID-19 in populous US States", color = "State")
+plot
+```
+## Modeling spread of COVID-19 in the US after vaccine introduction
+In this model, I want to compare the trends of spread of COVID-19 in the US during 2020 and 2021. Vaccines were introduced in December 2020, so I want to see if we can visualize how the introduction of vaccines impacted the trend of the spread of COVID-19.
+
+From the model, we can see an initial downward trend in early 2021. During the summer of 2021, I think it is interesting to see how varied the number of new cases per day is compared to the trends of 2020. The continued spread of the virus in late 2021 is likely due to the presence of variants and even more return to in-person activities vs. continued social distancing.
+``` {r model-spread-2021}
+US_2020_2021_cases <- US_cases_and_deaths %>%
+  filter(between(date, as.Date('2020-01-01'), as.Date('2021-12-31'))) %>%
+  group_by(date, Country_Region) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), .groups = 'drop')
+US_2020_2021_cases$new_cases <- ave(US_2020_2021_cases$cases, FUN = function(x) c(NA, diff(x)))
+US_2020_2021_cases <- US_2020_2021_cases %>%
+  mutate(new_cases = replace_na(new_cases, 0))
+mod_plot <- US_2020_2021_cases %>% ggplot(aes(x = date, y = new_cases)) +
+  geom_point(color = "blue") +
+  geom_smooth(formula = y ~ x, method = "lm", color = "red") + 
+  labs(x = "Date", y = "New cases", title = "Model of spread of COVID-19 after vaccine introduction")
+mod_plot
+```
+## Conclusions and limitations
+Looking at how the virus spread across the early years of COVID-19 reveals a number of interesting avenues for further exploration. Limitations of my analysis include a number of factors: primarily looking at the United States, relying on only a single data source for information, and the presumed under-reporting of cases as at-home tests became more widely available.
+```{r session info}
+sessionInfo()
+```
